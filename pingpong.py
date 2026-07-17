@@ -186,7 +186,7 @@ def run_codex(prompt, cwd, session, args, log_path):
     if args.yolo:
         cmd.append("--dangerously-bypass-approvals-and-sandbox")
     else:
-        cmd.append("--full-auto")
+        cmd += ["--sandbox", "workspace-write"]
     cmd += ["--skip-git-repo-check", prompt]
     out, rc = stream_run(cmd, cwd, args.timeout, log_path, echo=True)
     new_session = session

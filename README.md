@@ -57,7 +57,7 @@ pingpong --task-file task.md --dir ~/code/my-project
 | `--timeout SECONDS` | `1800` | Per-turn time limit |
 | `--yolo` | off | Full permissions for both agents (no sandbox / no permission checks). Only on projects you trust — the agents can then run any command. |
 
-Without `--yolo`, Claude runs with `--permission-mode acceptEdits` and Codex with `--full-auto` (workspace-write sandbox). That's enough for editing files and running most builds/tests. If a turn fails because a command was blocked, re-run with `--yolo`.
+Without `--yolo`, Claude runs with `--permission-mode acceptEdits` and Codex with `--sandbox workspace-write`. That's enough for editing files and running most builds/tests. If a turn fails because a command was blocked, re-run with `--yolo`.
 
 ## How the loop works
 
