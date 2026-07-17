@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -76,6 +77,22 @@ DONE_NOTE = """
 """
 
 
+def positive_int(value):
+    """Argparse type for options that cannot sensibly be zero or negative."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected an integer, got {value!r}") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return parsed
+
+
+def timestamp():
+    """Return a local, timezone-aware timestamp suitable for run metadata."""
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
 def log_print(msg=""):
     print(msg, flush=True)
 
@@ -98,14 +115,18 @@ def stream_run(cmd, cwd, timeout, log_path, echo):
         )
         fd = proc.stdout.fileno()
         chunks = []
-        start = time.time()
+        start = time.monotonic()
         try:
             while True:
-                if time.time() - start > timeout:
+                remaining = timeout - (time.monotonic() - start)
+                if remaining <= 0:
                     proc.kill()
                     proc.wait()
                     raise TimeoutError(f"turn exceeded {timeout}s")
-                ready, _, _ = select.select([fd], [], [], 5)
+                try:
+                    ready, _, _ = select.select([fd], [], [], min(1, remaining))
+                except InterruptedError:
+                    continue
                 if ready:
                     data = os.read(fd, 65536)
                     if data:
@@ -117,11 +138,21 @@ def stream_run(cmd, cwd, timeout, log_path, echo):
                             sys.stdout.write(text)
                             sys.stdout.flush()
                         continue
+                    # EOF: stdout closed but the process may still be running;
+                    # stop selecting (it would spin hot) and just wait for exit
+                    while proc.poll() is None:
+                        if time.monotonic() - start > timeout:
+                            proc.kill()
+                            proc.wait()
+                            raise TimeoutError(f"turn exceeded {timeout}s")
+                        time.sleep(0.05)
+                    break
                 if proc.poll() is not None:
                     break
-        except KeyboardInterrupt:
-            proc.kill()
-            proc.wait()
+        except BaseException:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
             raise
     return "".join(chunks), proc.returncode
 
@@ -186,19 +217,26 @@ def main():
     ap.add_argument("--task-file", help="Read the task description from a file")
     ap.add_argument("--dir", default=".", help="Target project directory (default: current dir)")
     ap.add_argument("--start", choices=["claude", "codex"], default="claude", help="Which agent goes first")
-    ap.add_argument("--max-rounds", type=int, default=16, help="Maximum number of turns (default: 16)")
-    ap.add_argument("--timeout", type=int, default=1800, help="Per-turn timeout in seconds (default: 1800)")
+    ap.add_argument("--max-rounds", type=positive_int, default=16,
+                    help="Maximum number of turns (default: 16)")
+    ap.add_argument("--timeout", type=positive_int, default=1800,
+                    help="Per-turn timeout in seconds (default: 1800)")
     ap.add_argument("--yolo", action="store_true",
                     help="Give both agents full permissions (claude --dangerously-skip-permissions, "
                          "codex --dangerously-bypass-approvals-and-sandbox). Use only on projects you trust.")
     args = ap.parse_args()
 
     if args.task_file:
-        task = Path(args.task_file).read_text(encoding="utf-8")
+        try:
+            task = Path(args.task_file).read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            ap.error(f"cannot read --task-file {args.task_file!r}: {exc}")
     elif args.task:
         task = args.task
     else:
         ap.error("provide a task description or --task-file")
+    if not task.strip():
+        ap.error("task description must not be empty")
 
     for tool in ("claude", "codex"):
         if not shutil.which(tool):
@@ -212,7 +250,7 @@ def main():
     pingpong_dir.mkdir(exist_ok=True)
     # keep run artifacts out of the target project's git history
     (pingpong_dir / ".gitignore").write_text("*\n")
-    run_dir = pingpong_dir / "runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir = pingpong_dir / "runs" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     run_dir.mkdir(parents=True)
     transcript = run_dir / "transcript.md"
     transcript.write_text(f"# Ping-pong run\n\nProject: {project_dir}\n\nTask:\n{task}\n\n")
@@ -223,13 +261,30 @@ def main():
     message = "(none - you go first)"
     pending_done_by = None
     outcome = "max-rounds"
+    last_turn = 0
+    run_started_at = timestamp()
+    run_started = time.monotonic()
+    turn_summaries = []
+    active_turn = None
+    active_turn_started = None
+    error = None
 
     banner(f"PING-PONG: {order[0]} starts | project: {project_dir}\nTask: {task[:200]}")
+    log_print(f"Run artifacts: {run_dir}")
 
     try:
         for turn in range(1, args.max_rounds + 1):
+            last_turn = turn
             agent = order[(turn - 1) % 2]
             other = order[turn % 2]
+            active_turn_started = time.monotonic()
+            active_turn = {
+                "turn": turn,
+                "agent": agent,
+                "started_at": timestamp(),
+                "resumed_session": bool(sessions[agent]),
+            }
+            turn_summaries.append(active_turn)
             banner(f"TURN {turn}/{args.max_rounds} - {agent.upper()}")
 
             done_note = DONE_NOTE.format(other=other) if pending_done_by == other else ""
@@ -246,13 +301,18 @@ def main():
 
             if rc != 0 and sessions[agent]:
                 log_print(f"  [warn] {agent} failed on resume (exit {rc}); retrying with a fresh session")
+                active_turn["resume_exit_code"] = rc
+                active_turn["retried_fresh_session"] = True
                 sessions[agent] = None
                 seen_full_prompt[agent] = False
                 prompt = FULL_PROMPT.format(agent=agent, other=other, task=task, turn=turn,
                                             max_rounds=args.max_rounds, message=message, done_note=done_note)
                 out, new_session, rc = RUNNERS[agent](prompt, project_dir, None, args, log_path)
+            active_turn["exit_code"] = rc
             if rc != 0:
                 log_print(f"  [error] {agent} exited with code {rc}; see {log_path}")
+                active_turn["result"] = "agent-error"
+                active_turn["duration_seconds"] = round(time.monotonic() - active_turn_started, 3)
                 outcome = "agent-error"
                 break
 
@@ -264,6 +324,11 @@ def main():
                 log_print(f"  [warn] {agent} did not write {HANDOFF_REL}; passing its raw output instead")
                 status = "CONTINUE"
                 handoff_text = f"({agent} forgot the handoff file; raw output below)\n\n{out.strip()[-4000:]}"
+                active_turn["handoff"] = "raw-output-fallback"
+            else:
+                active_turn["handoff"] = "file"
+            active_turn["status"] = status
+            active_turn["duration_seconds"] = round(time.monotonic() - active_turn_started, 3)
 
             with open(transcript, "a", encoding="utf-8") as t:
                 t.write(f"\n---\n\n## Turn {turn} - {agent} (STATUS: {status})\n\n{handoff_text}\n")
@@ -279,12 +344,51 @@ def main():
             message = handoff_text
     except KeyboardInterrupt:
         outcome = "interrupted"
+        if active_turn is not None:
+            active_turn["result"] = "interrupted"
         log_print("\n[interrupted by user]")
     except TimeoutError as e:
         outcome = "timeout"
+        error = {"type": type(e).__name__, "message": str(e)}
+        if active_turn is not None:
+            active_turn["result"] = "timeout"
         log_print(f"\n[error] {e}")
+    except Exception as e:
+        outcome = "orchestrator-error"
+        error = {"type": type(e).__name__, "message": str(e)}
+        if active_turn is not None:
+            active_turn["result"] = "orchestrator-error"
+        error_log = run_dir / "orchestrator-error.log"
+        error_log.write_text(traceback.format_exc(), encoding="utf-8")
+        log_print(f"\n[error] {type(e).__name__}: {e}; traceback: {error_log}")
+
+    if active_turn is not None and active_turn_started is not None and "duration_seconds" not in active_turn:
+        active_turn["duration_seconds"] = round(time.monotonic() - active_turn_started, 3)
+
+    summary = {
+        "task": task,
+        "project": str(project_dir),
+        "start": args.start,
+        "order": order,
+        "max_rounds": args.max_rounds,
+        "timeout_seconds": args.timeout,
+        "started_at": run_started_at,
+        "finished_at": timestamp(),
+        "duration_seconds": round(time.monotonic() - run_started, 3),
+        "turns_taken": last_turn,
+        "turns": turn_summaries,
+        "outcome": outcome,
+        "done_proposed_by": pending_done_by,
+        "run_dir": str(run_dir),
+    }
+    if error is not None:
+        summary["error"] = error
+    (run_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 
     banner(f"RUN FINISHED: {outcome.upper()}\nTranscript and logs: {run_dir}")
+    log_print(f"Summary: {last_turn} turn(s) taken, outcome={outcome}, "
+              f"done proposed by {pending_done_by or '-'}")
+    log_print(f"summary.json: {run_dir / 'summary.json'}")
     if outcome == "done":
         log_print("Both agents agree the task is complete. Review the changes before committing.")
     elif outcome == "max-rounds":

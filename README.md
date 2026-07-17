@@ -112,6 +112,7 @@ Later turns get a short version (just the new handoff + the reminder), since eac
 - `.pingpong/runs/<timestamp>/` inside the target project contains:
   - `transcript.md` — every handoff, in order (read this first)
   - `turn-NN-<agent>.log` — full raw output of each turn
+  - `summary.json` — machine-readable run metadata (outcome, per-turn durations, exit codes, errors)
 - `.pingpong/` self-ignores via its own `.gitignore`, so it never pollutes the project's git history.
 - Nothing is committed: at the end, review `git diff` and commit yourself (or make committing part of the task).
 
