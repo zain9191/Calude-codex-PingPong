@@ -28,6 +28,7 @@ from datetime import datetime
 from pathlib import Path
 
 HANDOFF_REL = Path(".pingpong") / "HANDOFF.md"
+DIRECTION_REL = Path(".pingpong") / "DIRECTION.md"
 
 FULL_PROMPT = """\
 You are {agent}, collaborating turn-by-turn with {other} on the repository in the current directory.
@@ -45,7 +46,7 @@ You are {agent}, collaborating turn-by-turn with {other} on the repository in th
 
 # Message from {other}
 {message}
-{done_note}
+{direction}{done_note}
 # End of your turn (required)
 When your work for this turn is finished, overwrite the file .pingpong/HANDOFF.md with exactly this structure:
 
@@ -66,8 +67,16 @@ Turn {turn} of at most {max_rounds}. Same task and same rules as before.
 
 # Message from {other}
 {message}
-{done_note}
+{direction}{done_note}
 Do your turn's work now. When finished, overwrite .pingpong/HANDOFF.md (STATUS: CONTINUE or DONE, ## What I did, ## Message to {other}). Anything not in that file will NOT be seen by {other}.
+"""
+
+DIRECTION_NOTE = """
+# NEW DIRECTION from the project owner (just arrived)
+The owner has updated the goals mid-run. Where this conflicts with the original task or
+any previous plan, THIS takes priority. Acknowledge in your handoff how you are adapting.
+
+{direction}
 """
 
 DONE_NOTE = """
@@ -205,6 +214,20 @@ def run_codex(prompt, cwd, session, args, log_path):
 RUNNERS = {"claude": run_claude, "codex": run_codex}
 
 
+def read_direction(project_dir, seen, agent):
+    """Return a DIRECTION_NOTE block if .pingpong/DIRECTION.md holds text this
+    agent hasn't seen yet (the owner can edit the file at any time mid-run)."""
+    path = project_dir / DIRECTION_REL
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="replace").strip()
+    if not text or seen.get(agent) == text:
+        return ""
+    seen[agent] = text
+    log_print(f"  [direction] new owner direction injected for {agent}")
+    return DIRECTION_NOTE.format(direction=text)
+
+
 def parse_handoff(project_dir):
     path = project_dir / HANDOFF_REL
     if not path.exists():
@@ -270,6 +293,7 @@ def main():
     pending_done_by = None
     outcome = "max-rounds"
     last_turn = 0
+    seen_direction = {}
     run_started_at = timestamp()
     run_started = time.monotonic()
     turn_summaries = []
@@ -295,10 +319,15 @@ def main():
             turn_summaries.append(active_turn)
             banner(f"TURN {turn}/{args.max_rounds} - {agent.upper()}")
 
+            direction = read_direction(project_dir, seen_direction, agent)
+            if direction:
+                active_turn["new_direction"] = True
+                pending_done_by = None  # goals changed: a pending DONE proposal is stale
             done_note = DONE_NOTE.format(other=other) if pending_done_by == other else ""
             template = SHORT_PROMPT if seen_full_prompt[agent] and sessions[agent] else FULL_PROMPT
             prompt = template.format(agent=agent, other=other, task=task, turn=turn,
-                                     max_rounds=args.max_rounds, message=message, done_note=done_note)
+                                     max_rounds=args.max_rounds, message=message,
+                                     direction=direction, done_note=done_note)
 
             handoff_path = project_dir / HANDOFF_REL
             if handoff_path.exists():
@@ -314,7 +343,8 @@ def main():
                 sessions[agent] = None
                 seen_full_prompt[agent] = False
                 prompt = FULL_PROMPT.format(agent=agent, other=other, task=task, turn=turn,
-                                            max_rounds=args.max_rounds, message=message, done_note=done_note)
+                                            max_rounds=args.max_rounds, message=message,
+                                            direction=direction, done_note=done_note)
                 out, new_session, rc = RUNNERS[agent](prompt, project_dir, None, args, log_path)
             active_turn["exit_code"] = rc
             if rc != 0:

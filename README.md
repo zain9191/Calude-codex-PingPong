@@ -123,6 +123,26 @@ Anything not written to .pingpong/HANDOFF.md will NOT be seen by {other}.
 
 Later turns get a short version (just the new handoff + the reminder), since each agent's session already has the context.
 
+## Steering a run while it's running
+
+You can change the goals or give a new direction **without stopping the run**. From a
+second terminal, write your instruction into `.pingpong/DIRECTION.md` in the project:
+
+```bash
+echo "Drop the WebGL idea, it's too slow on mobile. Focus on animated SVG instead." \
+  > ~/code/my-project/.pingpong/DIRECTION.md
+```
+
+- The next agent to take a turn receives it as **NEW DIRECTION from the project owner**,
+  with explicit priority over the original task; the other agent gets it on its next turn too.
+- Edit the file again anytime — each new content is delivered once to each agent.
+- A new direction cancels any pending DONE proposal, so the run can't end on stale goals.
+- The original MISSION stays in force for everything your direction doesn't override.
+
+For a **complete pivot** (the mission itself is wrong): `Ctrl+C` to stop the run, rewrite
+`MISSION.md`, and start a new run. The work already done is still in the files, so the
+agents pick up from the current state, not from zero.
+
 ## Where things end up
 
 - All work happens in your project's files, as usual.
