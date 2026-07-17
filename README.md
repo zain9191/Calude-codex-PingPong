@@ -17,13 +17,13 @@ you ──task──> pingpong.py ──> claude (turn 1) ──HANDOFF.md──
 ## Install
 
 ```bash
-git clone <this repo> ~/Documents/Perso/claude-codex-pingpoing
+git clone <this repo> ~/Documents/Perso/claude-codex-pingpong
 ```
 
 Optional but recommended — add an alias to `~/.zshrc` so it works from anywhere:
 
 ```bash
-alias pingpong='python3 ~/Documents/Perso/claude-codex-pingpoing/pingpong.py'
+alias pingpong='python3 ~/Documents/Perso/claude-codex-pingpong/pingpong.py'
 ```
 
 ## Usage
@@ -47,6 +47,21 @@ Long task? Put it in a file:
 pingpong --task-file task.md --dir ~/code/my-project
 ```
 
+### Giving them a real mission (recommended for big tasks)
+
+For anything bigger than a one-liner, write a mission file instead of a sentence — copy
+[MISSION-TEMPLATE.md](MISSION-TEMPLATE.md), fill in **Context / Goals / Hard constraints /
+Definition of done**, save it as `MISSION.md` in your project, then:
+
+```bash
+pingpong --task-file MISSION.md --dir ~/code/my-project --yolo
+```
+
+The **Definition of done** section is the most important part: it's exactly what the
+final verification turn will check before the agents are allowed to agree on DONE.
+The prompts already tell both agents they may spawn subagents / parallel workers
+for research, sub-tasks, and verification.
+
 ### Options
 
 | Flag | Default | What it does |
@@ -56,6 +71,8 @@ pingpong --task-file task.md --dir ~/code/my-project
 | `--max-rounds N` | `16` | Hard cap on turns (prevents infinite ping-pong) |
 | `--timeout SECONDS` | `1800` | Per-turn time limit |
 | `--yolo` | off | Full permissions for both agents (no sandbox / no permission checks). Only on projects you trust — the agents can then run any command. |
+| `--claude-arg ARG` | — | Extra flag passed to the `claude` CLI, repeatable (e.g. `--claude-arg --model --claude-arg opus`) |
+| `--codex-arg ARG` | — | Extra flag passed to the `codex` CLI, repeatable |
 
 Without `--yolo`, Claude runs with `--permission-mode acceptEdits` and Codex with `--sandbox workspace-write`. That's enough for editing files and running most builds/tests. If a turn fails because a command was blocked, re-run with `--yolo`.
 

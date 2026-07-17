@@ -38,6 +38,7 @@ You are {agent}, collaborating turn-by-turn with {other} on the repository in th
 # How this collaboration works
 - You and {other} alternate turns. This is turn {turn} of at most {max_rounds}.
 - Do a focused chunk of real work this turn: implement, review, test or fix. Prefer small verifiable steps over big rewrites.
+- You may spawn subagents / parallel workers if your CLI supports it (research, independent sub-tasks, verification) — but you stay responsible for reviewing and integrating their output before handing off.
 - Critically review what {other} did last turn before building on it. If something is wrong, fix it or push back in your handoff message.
 - Do not `git commit` or `git push` unless the task explicitly asks for it.
 - Do not create or modify anything under .pingpong/ except the handoff file described below.
@@ -165,6 +166,7 @@ def run_claude(prompt, cwd, session, args, log_path):
         cmd += ["--permission-mode", "acceptEdits"]
     if session:
         cmd += ["--resume", session]
+    cmd += args.claude_arg
     cmd.append(prompt)
     log_print("  claude is working (output shown when the turn ends)...")
     out, rc = stream_run(cmd, cwd, args.timeout, log_path, echo=False)
@@ -187,7 +189,9 @@ def run_codex(prompt, cwd, session, args, log_path):
         cmd.append("--dangerously-bypass-approvals-and-sandbox")
     else:
         cmd += ["--sandbox", "workspace-write"]
-    cmd += ["--skip-git-repo-check", prompt]
+    cmd.append("--skip-git-repo-check")
+    cmd += args.codex_arg
+    cmd.append(prompt)
     out, rc = stream_run(cmd, cwd, args.timeout, log_path, echo=True)
     new_session = session
     m = re.search(r"(?:session id|session_id|thread id)[:\s]+([0-9a-fA-F][0-9a-fA-F-]{7,})", out)
@@ -224,6 +228,10 @@ def main():
     ap.add_argument("--yolo", action="store_true",
                     help="Give both agents full permissions (claude --dangerously-skip-permissions, "
                          "codex --dangerously-bypass-approvals-and-sandbox). Use only on projects you trust.")
+    ap.add_argument("--claude-arg", action="append", default=[], metavar="ARG",
+                    help="Extra argument passed to the claude CLI (repeatable)")
+    ap.add_argument("--codex-arg", action="append", default=[], metavar="ARG",
+                    help="Extra argument passed to the codex CLI (repeatable)")
     args = ap.parse_args()
 
     if args.task_file:
