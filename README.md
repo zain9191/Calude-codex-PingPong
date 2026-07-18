@@ -69,7 +69,7 @@ for research, sub-tasks, and verification.
 | `--dir PATH` | current dir | Project the agents work on |
 | `--start claude\|codex` | `claude` | Who takes the first turn |
 | `--max-rounds N` | `16` | Hard cap on turns (prevents infinite ping-pong) |
-| `--timeout SECONDS` | `1800` | Per-turn time limit |
+| `--timeout SECONDS` | `1800` | Per-turn time limit. A turn that exceeds it is cut off and the baton passes to the other agent (the run continues). For big missions with subagent teams, use `5400`+ |
 | `--yolo` | off | Full permissions for both agents (no sandbox / no permission checks). Only on projects you trust — the agents can then run any command. |
 | `--claude-args "STR"` | — | Extra `claude` CLI flags as one quoted string (e.g. `--claude-args "--model opus"`) |
 | `--codex-args "STR"` | — | Extra `codex` CLI flags as one quoted string |

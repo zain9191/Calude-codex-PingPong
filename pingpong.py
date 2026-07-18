@@ -340,18 +340,41 @@ def main():
                 handoff_path.unlink()
 
             log_path = run_dir / f"turn-{turn:02d}-{agent}.log"
-            out, new_session, rc = RUNNERS[agent](prompt, project_dir, sessions[agent], args, log_path)
+            try:
+                out, new_session, rc = RUNNERS[agent](prompt, project_dir, sessions[agent], args, log_path)
 
-            if rc != 0 and sessions[agent]:
-                log_print(f"  [warn] {agent} failed on resume (exit {rc}); retrying with a fresh session")
-                active_turn["resume_exit_code"] = rc
-                active_turn["retried_fresh_session"] = True
-                sessions[agent] = None
+                if rc != 0 and sessions[agent]:
+                    log_print(f"  [warn] {agent} failed on resume (exit {rc}); retrying with a fresh session")
+                    active_turn["resume_exit_code"] = rc
+                    active_turn["retried_fresh_session"] = True
+                    sessions[agent] = None
+                    seen_full_prompt[agent] = False
+                    prompt = FULL_PROMPT.format(agent=agent, other=other, task=task, turn=turn,
+                                                max_rounds=args.max_rounds, message=message,
+                                                direction=direction, done_note=done_note)
+                    out, new_session, rc = RUNNERS[agent](prompt, project_dir, None, args, log_path)
+            except TimeoutError:
+                # A turn that runs long is not fatal: hand the baton to the other
+                # agent with an honest account of what happened.
+                log_print(f"\n  [timeout] {agent} exceeded {args.timeout}s and was cut off; "
+                          f"passing the baton to {other}")
+                active_turn["result"] = "turn-timeout"
+                active_turn["duration_seconds"] = round(time.monotonic() - active_turn_started, 3)
+                sessions[agent] = None  # session id unknown or stale after the kill
                 seen_full_prompt[agent] = False
-                prompt = FULL_PROMPT.format(agent=agent, other=other, task=task, turn=turn,
-                                            max_rounds=args.max_rounds, message=message,
-                                            direction=direction, done_note=done_note)
-                out, new_session, rc = RUNNERS[agent](prompt, project_dir, None, args, log_path)
+                status, handoff_text = parse_handoff(project_dir)
+                if handoff_text is None:
+                    status = "CONTINUE"
+                    handoff_text = (f"({agent} exceeded the {args.timeout}s per-turn limit and was killed "
+                                    f"mid-work — it could not write a handoff. Inspect the current state of "
+                                    f"the repository, salvage and verify what is useful, then continue the "
+                                    f"task in smaller incremental steps.)")
+                active_turn["status"] = status
+                with open(transcript, "a", encoding="utf-8") as t:
+                    t.write(f"\n---\n\n## Turn {turn} - {agent} (TIMEOUT, STATUS: {status})\n\n{handoff_text}\n")
+                pending_done_by = None
+                message = handoff_text
+                continue
             active_turn["exit_code"] = rc
             if rc != 0:
                 log_print(f"  [error] {agent} exited with code {rc}; see {log_path}")
