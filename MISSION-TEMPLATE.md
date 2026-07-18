@@ -5,9 +5,9 @@
 The agents can read the code, but they can't read your mind — say what "better" means to you.>
 
 ## Goals (in priority order)
-1. <The most important outcome>
+1. <The most important outcome is to have on scene for all the website no mutiplem only one that tell a story >
 2. <Second outcome>
-3. <Nice to have>
+3. <Nice to have if the sence is realsitc and not animated>
 
 ## Hard constraints
 - <e.g. zero cost: no paid API, no account creation, no credits>
