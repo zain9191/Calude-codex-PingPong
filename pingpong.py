@@ -175,7 +175,7 @@ def run_claude(prompt, cwd, session, args, log_path):
         cmd += ["--permission-mode", "acceptEdits"]
     if session:
         cmd += ["--resume", session]
-    cmd += args.claude_arg
+    cmd += args.claude_arg + shlex.split(args.claude_args)
     cmd.append(prompt)
     log_print("  claude is working (output shown when the turn ends)...")
     out, rc = stream_run(cmd, cwd, args.timeout, log_path, echo=False)
@@ -199,7 +199,7 @@ def run_codex(prompt, cwd, session, args, log_path):
     else:
         cmd += ["--sandbox", "workspace-write"]
     cmd.append("--skip-git-repo-check")
-    cmd += args.codex_arg
+    cmd += args.codex_arg + shlex.split(args.codex_args)
     cmd.append(prompt)
     out, rc = stream_run(cmd, cwd, args.timeout, log_path, echo=True)
     new_session = session
@@ -252,9 +252,15 @@ def main():
                     help="Give both agents full permissions (claude --dangerously-skip-permissions, "
                          "codex --dangerously-bypass-approvals-and-sandbox). Use only on projects you trust.")
     ap.add_argument("--claude-arg", action="append", default=[], metavar="ARG",
-                    help="Extra argument passed to the claude CLI (repeatable)")
+                    help="Extra argument passed to the claude CLI (repeatable; "
+                         "use --claude-arg=--flag for values starting with a dash)")
     ap.add_argument("--codex-arg", action="append", default=[], metavar="ARG",
-                    help="Extra argument passed to the codex CLI (repeatable)")
+                    help="Extra argument passed to the codex CLI (repeatable; "
+                         "use --codex-arg=--flag for values starting with a dash)")
+    ap.add_argument("--claude-args", default="", metavar="STR",
+                    help='Extra claude CLI arguments as one quoted string, e.g. --claude-args "--model opus"')
+    ap.add_argument("--codex-args", default="", metavar="STR",
+                    help='Extra codex CLI arguments as one quoted string, e.g. --codex-args "-m gpt-5.6-sol"')
     args = ap.parse_args()
 
     if args.task_file:

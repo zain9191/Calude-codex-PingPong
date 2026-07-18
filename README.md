@@ -71,8 +71,8 @@ for research, sub-tasks, and verification.
 | `--max-rounds N` | `16` | Hard cap on turns (prevents infinite ping-pong) |
 | `--timeout SECONDS` | `1800` | Per-turn time limit |
 | `--yolo` | off | Full permissions for both agents (no sandbox / no permission checks). Only on projects you trust — the agents can then run any command. |
-| `--claude-arg ARG` | — | Extra flag passed to the `claude` CLI, repeatable (e.g. `--claude-arg --model --claude-arg opus`) |
-| `--codex-arg ARG` | — | Extra flag passed to the `codex` CLI, repeatable |
+| `--claude-args "STR"` | — | Extra `claude` CLI flags as one quoted string (e.g. `--claude-args "--model opus"`) |
+| `--codex-args "STR"` | — | Extra `codex` CLI flags as one quoted string |
 
 Without `--yolo`, Claude runs with `--permission-mode acceptEdits` and Codex with `--sandbox workspace-write`. That's enough for editing files and running most builds/tests. If a turn fails because a command was blocked, re-run with `--yolo`.
 
